@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Banking Demo — Sanket</title>
+
+  <!-- Bootstrap (for layout) -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    /* Simple modern styling */
+    body { background: linear-gradient(180deg,#061028,#081426); color:#e8f4ff; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Poppins", sans-serif; padding-top: 2rem; }
+    .card { background: rgba(255,255,255,0.04); border: none; border-radius: 12px; box-shadow: 0 8px 30px rgba(2,6,23,0.6); }
+    .btn-primary { background: linear-gradient(90deg,#6ee7b7,#60a5fa); border: none; color:#072032; font-weight:700; }
+    .muted { color: #9aa4b2; }
+    pre.log { background: rgba(0,0,0,0.35); color: #e9f8ff; padding: 10px; border-radius: 8px; max-height: 220px; overflow:auto; }
+    .loader { display:inline-block; width:16px;height:16px;border-radius:50%; border:3px solid rgba(255,255,255,0.14); border-top-color: #60a5fa; animation: spin 1s linear infinite; margin-right:8px; vertical-align:middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hidden { display:none; }
+    /* small screens */
+    @media (max-width:576px){ .cols-mobile { flex-direction: column; gap: 1rem; } }
+  </style>
+</head>
+<body>
+  <main class="container" style="max-width:920px">
+    <h1 class="mb-3">Banking Demo — Sanket</h1>
+    <p class="muted mb-4">This version runs your Python banking logic in the browser using <strong>Pyodide</strong>. Works on GitHub Pages.</p>
+
+    <!-- status / loader -->
+    <div id="status" class="mb-3">
+      <span id="loader" class="loader"></span><span id="statusText">Loading Python runtime (Pyodide)...</span>
+    </div>
+
+    <div class="row cols-mobile d-flex align-items-start gx-3 gy-3">
+
+      <!-- Controls -->
+      <div class="col-md-6">
+        <div class="card p-3">
+          <h5>Actions</h5>
+
+          <!-- Deposit -->
+          <div class="mb-3">
+            <label class="form-label">Deposit Amount</label>
+            <input id="depositAmt" type="number" class="form-control" placeholder="Enter amount (e.g., 500)">
+            <div class="d-flex gap-2 mt-2">
+              <button id="depositBtn" class="btn btn-primary">Deposit</button>
+              <button id="withdrawBtn" class="btn btn-outline-light">Withdraw</button>
+            </div>
+          </div>
+
+          <!-- Withdraw (same input, withdraw uses deposit field if uses withdraw field is empty) -->
+          <div class="mb-3">
+            <label class="form-label">Or Withdraw Amount</label>
+            <input id="withdrawAmt" type="number" class="form-control" placeholder="Enter amount to withdraw">
+            <div class="d-flex gap-2 mt-2">
+              <button id="withdrawBtn2" class="btn btn-primary">Withdraw</button>
+              <button id="checkBtn" class="btn btn-outline-light">Check Balance</button>
+            </div>
+          </div>
+
+          <div class="mt-2">
+            <button id="resetBtn" class="btn btn-sm btn-danger">Reset Balance</button>
+            <small class="muted d-block mt-2">Balance persists via your browser (localStorage).</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Output / Log -->
+      <div class="col-md-6">
+        <div class="card p-3">
+          <h5>Console Output</h5>
+          <pre id="log" class="log" aria-live="polite" role="status">Initializing...</pre>
+          <div class="mt-3">
+            <strong>Current balance:</strong> <span id="balanceDisplay">0</span> Rs
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-4 text-muted">
+      <small>Notes: This runs fully client-side. If you'd like a server-run version (so Python runs on a server), you'll need a hosting service that runs Python (e.g., Replit, Railway, Render, PythonAnywhere, Heroku-style platforms).</small>
+    </div>
+  </main>
+
+  <!-- Pyodide: load from CDN -->
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+
+  <script>
+    /* -------------------------
+       JavaScript + Pyodide integration
+       - Defines the same Python functions you provided
+       - Runs them in the browser using Pyodide
+       - Persists balance to localStorage
+       ------------------------- */
+
+    const logEl = document.getElementById('log');
+    const balEl = document.getElementById('balanceDisplay');
+    const statusText = document.getElementById('statusText');
+    const loader = document.getElementById('loader');
+
+    let pyodide = null;
+
+    // Helper to append to log
+    function appendLog(text){
+      logEl.textContent = text + "\n" + logEl.textContent;
+    }
+
+    // Utility to run python code and return string result
+    function runPy(expr){
+      try{
+        const r = pyodide.runPython(expr);
+        return r === undefined ? '' : r.toString();
+      } catch(e){
+        console.error('Python error', e);
+        return 'Python error: ' + e;
+      }
+    }
+
+    async function initPyodideAndApp(){
+      statusText.textContent = 'Loading Pyodide runtime (this may take a few seconds)...';
+      pyodide = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.23.4/full/" });
+
+      // Your Python banking code (slightly hardened for input checks)
+      const pythonCode = `
+balance = 0
+
+def check_balance():
+    return f"Total balance: {balance}"
+
+def cash_withdraw(w_amt):
+    global balance
+    try:
+        w_amt = int(w_amt)
+    except:
+        return "Invalid withdraw amount"
+    if w_amt <= 0:
+        return "Enter amount > 0"
+    if balance < w_amt:
+        return "Insufficient Balance"
+    balance -= w_amt
+    return f"{w_amt} Rs successfully Withdrawn"
+
+def cash_deposit(d_amt):
+    global balance
+    try:
+        d_amt = int(d_amt)
+    except:
+        return "Invalid deposit amount"
+    if d_amt <= 0:
+        return "Enter amount > 0"
+    balance += d_amt
+    return f"{d_amt} Rs deposited Successfully"
+`;
+
+      // load python code into interpreter
+      await pyodide.runPythonAsync(pythonCode);
+
+      // If previous balance in localStorage, restore it
+      const stored = localStorage.getItem('balance');
+      if (stored !== null && !isNaN(parseInt(stored, 10))){
+        pyodide.runPython(`balance = ${parseInt(stored, 10)}`);
+      }
+
+      // update UI
+      updateBalanceDisplay();
+      appendLog('Pyodide ready. Try deposit/withdraw now.');
+      statusText.textContent = 'Ready';
+      loader.classList.add('hidden');
+    }
+
+    // update visible balance display from python state
+    function updateBalanceDisplay(){
+      try{
+        const bal = pyodide.runPython('int(balance)');
+        balEl.textContent = bal.toString();
+        localStorage.setItem('balance', bal.toString());
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    // Button handlers
+    document.getElementById('depositBtn').addEventListener('click', ()=>{
+      const amt = parseInt(document.getElementById('depositAmt').value || 0, 10);
+      if (!pyodide) { appendLog('Interpreter not ready'); return; }
+      const res = runPy(`cash_deposit(${Number.isFinite(amt) ? amt : 0})`);
+      appendLog(res);
+      updateBalanceDisplay();
+    });
+
+    document.getElementById('withdrawBtn').addEventListener('click', ()=>{
+      const amt = parseInt(document.getElementById('depositAmt').value || 0,10);
+      if (!pyodide) { appendLog('Interpreter not ready'); return; }
+      const res = runPy(`cash_withdraw(${Number.isFinite(amt) ? amt : 0})`);
+      appendLog(res);
+      updateBalanceDisplay();
+    });
+
+    document.getElementById('withdrawBtn2').addEventListener('click', ()=>{
+      const amt = parseInt(document.getElementById('withdrawAmt').value || 0,10);
+      if (!pyodide) { appendLog('Interpreter not ready'); return; }
+      const res = runPy(`cash_withdraw(${Number.isFinite(amt) ? amt : 0})`);
+      appendLog(res);
+      updateBalanceDisplay();
+    });
+
+    document.getElementById('checkBtn').addEventListener('click', ()=>{
+      if (!pyodide) { appendLog('Interpreter not ready'); return; }
+      const res = runPy('check_balance()');
+      appendLog(res);
+      updateBalanceDisplay();
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', ()=>{
+      if (!pyodide) { appendLog('Interpreter not ready'); return; }
+      pyodide.runPython('balance = 0');
+      updateBalanceDisplay();
+      appendLog('Balance reset to 0');
+    });
+
+    // initialize
+    appendLog('Starting... loading Pyodide.');
+    initPyodideAndApp().catch(e => { appendLog('Failed to load Pyodide: ' + e); statusText.textContent = 'Load error'; loader.classList.add('hidden'); });
+  </script>
+</body>
+</html>
